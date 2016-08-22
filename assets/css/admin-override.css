@@ -1,0 +1,47 @@
+@CHARSET "ISO-8859-1";
+
+td th {
+	vertical-align:middle;
+}
+
+thead {
+	background-color:#337AB7 ;
+	color:#FFFFFF ;
+}
+.title {
+	text-align:center;
+}
+
+.navbar-nav > li > a {
+    position: relative;
+    display: inline-block;
+    padding: 10px 5px;
+}
+
+.modal-dialog {
+    width: 900px;
+    margin: 30px auto;
+}
+
+
+.navbar-brand {
+    height: 99px;
+    vertical-align:middle;
+    padding: 15px 20px 15px 0px;
+}
+.navbar-right {
+    height: 69px;
+    vertical-align:middle;
+    padding: 15px 0px;
+}
+.navbar-text {
+    height: 69px;
+    vertical-align:middle;
+    padding: 25px 0px;
+    font-size: 22px;
+	line-height: 20px;
+	margin-left: 0px;
+}
+.navbar-right {
+    margin-right: 0px;
+}

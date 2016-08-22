@@ -1,0 +1,3 @@
+{include file=$SESSION.ENVIRONMENT.EN_HEADER}	
+
+{include file=$SESSION.ENVIRONMENT.EN_FOOTER}

@@ -1,0 +1,711 @@
+<?php
+function ListJobsProgress($arCtl,$JOBS){
+
+	/************************************************************************************************
+	 Get Data
+	***********************************************************************************************/
+
+	// Set defaulst on first run
+	if ($arCtl['DATE'] == ""){
+		$arCtl['DATE'] = date('Y-m-d');
+	}
+	if ($arCtl['STATUS'] == ""){
+		$arCtl['STATUS'] = "Y";
+	}
+	if ($arCtl['JO_JOB_TYPE'] == ""){
+		$arCtl['JO_JOB_TYPE'] = "1";
+	}
+	
+	
+	// DB Connection
+	$db = db_connect();
+
+	// get phase names for headers
+	$sql = "select JTP_SEQUENCE, JTP_NAME from JOB_TYPE_PHASES where JTP_JTKEY = '" . $arCtl['JO_JOB_TYPE'] . "' order by JTP_SEQUENCE ASC" ;
+	//echo $sql;
+	$result = mysqli_query($db,$sql);
+	if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+	$count=0;
+	while($qd = mysqli_fetch_assoc($result)){
+		$arPhaseTitles[$count]['JTP_NAME'] = $qd['JTP_NAME'];
+		$arPhaseTitles[$count]['JTP_SEQUENCE'] = $count;
+		$count++;
+	}
+	// do query
+	
+	$sql  = "SELECT  ST_KEY, ST_NAME, JO_KEY, JO_STKEY, JO_JOB_TYPE, JO_START_DATE START, date_format(JO_START_DATE,'%d/%m/%y') JO_START_DATE, date_format(JO_END_DATE,'%d/%m/%y') JO_END_DATE, JT_NAME
+				FROM JOB_TYPE, JOBS
+				LEFT OUTER JOIN STORES ON JO_STKEY = ST_KEY 
+				LEFT OUTER JOIN ASSETS ON ST_KEY = AS_STKEY 
+			where JO_JOB_TYPE = JT_KEY";
+
+	if ($arCtl['JO_JOB_TYPE'] != ""){
+		$where .= " AND JO_JOB_TYPE = '" . $arCtl['JO_JOB_TYPE'] . "'";
+	}
+
+	if ($arCtl['AS_COMPATIBLE_CONTROLLER'] != ""){
+		$where .= " AND AS_COMPATIBLE_CONTROLLER ='" . $arCtl['AS_COMPATIBLE_CONTROLLER'] . "'";
+	}
+
+	if ($arCtl['ST_NAME'] != ""){
+		$where .= " AND ST_NAME like '%" . $arCtl['ST_NAME'] . "%'";
+	}
+	
+	if ($arCtl['JO_STATUS'] != ""){
+		$where .= " AND JO_STATUS = '" . $arCtl['JO_STATUS'] . "'";
+	}
+	
+	$sql  = $sql . $where . " group by ST_KEY, ST_NAME, JO_KEY, JO_STKEY, JO_JOB_TYPE, JO_START_DATE, JO_END_DATE, JT_NAME ORDER BY START ASC";
+	
+	//echo $sql;
+	$result = mysqli_query($db,$sql);
+	if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+
+	$count=0;
+	while($qd = mysqli_fetch_assoc($result)){
+		$arJOBS[$count] = $qd;
+		$arJOBS[$count]['STATUS'] = "N";
+		
+		// get latest phase
+		$sql = "select PH_KEY, PH_NAME, date_format(PH_START_DATE,'%d/%m/%y') PH_START_DATE, PH_START_DATE PH_START_DATE_SORT, date_format(PH_END_DATE,'%d/%m/%y') PH_END_DATE,  
+						date_format(PH_ACTUAL_END_DATE,'%d/%m/%y') PH_ACTUAL_END_DATE,PH_ACTUAL_END_DATE PH_ACTUAL_END_DATE_SORT,
+				JTP_ACTIONNAME1, JTP_ACTIONNAME2, JTP_ACTIONNAME3,PH_STATUS,
+				date_format(PH_ACTIONDATE1,'%d/%m/%y') PH_ACTIONDATE1,PH_ACTIONSTATUS1,PH_ACTIONDATE1 PH_ACTIONDATE1_SORT,
+				date_format(PH_ACTIONDATE2,'%d/%m/%y') PH_ACTIONDATE2,PH_ACTIONSTATUS2,PH_ACTIONDATE2 PH_ACTIONDATE2_SORT,
+				date_format(PH_ACTIONDATE3,'%d/%m/%y') PH_ACTIONDATE3,PH_ACTIONSTATUS3,PH_ACTIONDATE3 PH_ACTIONDATE3_SORT,
+				date_format(PH_ACTIONDATE4,'%d/%m/%y') PH_ACTIONDATE4,PH_ACTIONSTATUS4,PH_ACTIONDATE4 PH_ACTIONDATE4_SORT,
+				if(PH_ACTIONDATE1 <'" . $arCtl['DATE'] . "' and PH_ACTIONSTATUS1 <> 'C','Y','N') LATEACTION1,
+				if(PH_ACTIONDATE2 <'" . $arCtl['DATE'] . "' and PH_ACTIONSTATUS2 <> 'C','Y','N') LATEACTION2,
+				if(PH_ACTIONDATE3 <'" . $arCtl['DATE'] . "' and PH_ACTIONSTATUS3 <> 'C','Y','N') LATEACTION3,
+				if(PH_ACTIONDATE4 <'" . $arCtl['DATE'] . "' and PH_ACTIONSTATUS4 <> 'C','Y','N') LATEACTION4,
+				if(PH_START_DATE<'" . $arCtl['DATE'] . "' and PH_STATUS = 'Not Started','Y','N') LATESTART, if(PH_END_DATE<'" . $arCtl['DATE'] . "' and PH_STATUS <> 'Complete','Y','N') LATEEND
+				from PHASES,JOB_TYPE_PHASES 
+				where PH_JTPKEY = JTP_KEY 
+				and PH_JOKEY = '" . $qd['JO_KEY'] . "' 
+				order by PH_SEQUENCE ASC";
+		//echo $sql . "<BR>";
+		$Phases=0;
+		$CompletedPhases = 0;
+		$result2 = mysqli_query($db,$sql);
+		if (!$result2) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+		while($qd2 = mysqli_fetch_assoc($result2)){
+
+			//calc progress & set current phase
+			$PH_ACTION = "";
+			$arJOBS[$count]['PHASES'][$Phases]['DESC'] = "&nbsp;"; // default to space
+
+			// get DESc notes
+			
+			//has phase got any actions
+			$NEXT_PH_ACTION = "";
+			if ($qd2['JTP_ACTIONNAME1'] != "" ){
+				if ($qd2['PH_ACTIONSTATUS1'] != 'C'){
+					if ($qd2['LATEACTION1'] == "Y"){
+						$PH_ACTION = "No " . $qd2['JTP_ACTIONNAME1'] . " " . $qd2['PH_ACTIONDATE1'];
+						$PH_SORTDATE = $qd2['PH_ACTIONDATE1_SORT'];
+					} else {
+						$NEXT_PH_ACTION = $qd2['JTP_ACTIONNAME1'] . " (" . $qd2['PH_ACTIONDATE1'] . ")";
+						$PH_SORTDATE = $qd2['PH_ACTIONDATE1_SORT'];
+					}
+				}
+			}
+			if ($qd2['JTP_ACTIONNAME2'] != "" and $PH_ACTION == "" ){
+				if ($qd2['PH_ACTIONSTATUS2'] != 'C'){
+					if ($qd2['LATEACTION2'] == "Y"){
+						$PH_ACTION = "No " . $qd2['JTP_ACTIONNAME2'] . " " . $qd2['PH_ACTIONDATE2'];
+						$PH_SORTDATE = $qd2['PH_ACTIONDATE2_SORT'];
+					} else {
+						if ($NEXT_PH_ACTION == ""){
+							$NEXT_PH_ACTION .= $qd2['JTP_ACTIONNAME2'] . " (" . $qd2['PH_ACTIONDATE2'] . ")";
+							$PH_SORTDATE = $qd2['PH_ACTIONDATE2_SORT'];
+						}
+					}
+				}
+			}
+			if ($qd2['JTP_ACTIONNAME3'] != "" and $PH_ACTION == "" ){
+				if ($qd2['PH_ACTIONSTATUS3'] != 'C'){
+					if ($qd2['LATEACTION3'] == "Y"){
+						$PH_ACTION = "No " . $qd2['JTP_ACTIONNAME3'] . " " . $qd2['PH_ACTIONDATE3'];
+						$PH_SORTDATE = $qd2['PH_ACTIONDATE3_SORT'];
+					} else {
+						if ($NEXT_PH_ACTION == ""){
+							$NEXT_PH_ACTION .= $qd2['JTP_ACTIONNAME3'] . " (" . $qd2['PH_ACTIONDATE3'] . ")";
+							$PH_SORTDATE = $qd2['PH_ACTIONDATE3_SORT'];
+						}
+					}
+				}
+			}
+			if ($qd2['JTP_ACTIONNAME4'] != "" and $PH_ACTION == "" ){
+				if ($qd2['PH_ACTIONSTATUS4'] != 'C'){
+					if ($qd2['LATEACTION4'] == "Y"){
+						$PH_ACTION = "No " . $qd2['JTP_ACTIONNAME4'] . " " . $qd2['PH_ACTIONDATE4'];
+						$PH_SORTDATE = $qd2['PH_ACTIONDATE4_SORT'];
+					} else {
+						if ($NEXT_PH_ACTION == ""){
+							$NEXT_PH_ACTION .= $qd2['JTP_ACTIONNAME4'] . " (" . $qd2['PH_ACTIONDATE4'] . ")";
+							$PH_SORTDATE = $qd2['PH_ACTIONDATE4_SORT'];
+						}
+					}
+				}
+			}
+				
+			
+			
+			// get colors			
+			if($qd2['PH_STATUS'] == "Complete") {
+				$CompletedPhases++;
+				$arJOBS[$count]['PHASES'][$Phases]['COLOR'] = "#009AE0";
+				$arJOBS[$count]['PHASES'][$Phases]['COLOR'] = "";
+				$arJOBS[$count]['PHASES'][$Phases]['DESC'] .= $qd2['PH_ACTUAL_END_DATE'];
+				$arJOBS[$count]['PHASES'][$Phases]['SORTDATE'] = $qd2['PH_ACTUAL_END_DATE_SORT'];
+			} elseif ($PH_ACTION != ""){
+				$arJOBS[$count]['PHASES'][$Phases]['DESC'] .= $PH_ACTION . " ";
+				$arJOBS[$count]['PHASES'][$Phases]['SORTDATE'] = $PH_SORTDATE;
+				$arJOBS[$count]['PHASES'][$Phases]['COLOR'] = "#ff4040";
+				$arJOBS[$count]['STATUS'] = "Y";
+			} elseif ($qd2['LATESTART'] == "Y"){
+				$arJOBS[$count]['PHASES'][$Phases]['DESC'] .= $qd2['PH_START_DATE'];
+				$arJOBS[$count]['PHASES'][$Phases]['SORTDATE'] = $qd2['PH_START_DATE_SORT'];
+				$arJOBS[$count]['PHASES'][$Phases]['COLOR'] = "#ff4040";
+				$arJOBS[$count]['STATUS'] = "Y";
+			}elseif ($qd2['LATEEND'] == "Y" and $qd2['PH_STATUS'] == "Started"){
+				$arJOBS[$count]['PHASES'][$Phases]['DESC'] .= $qd2['PH_START_DATE'] . " (Started)";
+				$arJOBS[$count]['PHASES'][$Phases]['SORTDATE'] = $qd2['PH_START_DATE_SORT'];
+				$arJOBS[$count]['PHASES'][$Phases]['COLOR'] = "#ff4040";
+				$arJOBS[$count]['STATUS'] = "Y";
+			}elseif ($qd2['LATEEND'] == "Y"){
+				$arJOBS[$count]['PHASES'][$Phases]['DESC'] .= $qd2['PH_END_DATE'] . " ";
+				$arJOBS[$count]['PHASES'][$Phases]['SORTDATE'] = $qd2['PH_START_DATE_SORT'];
+				$arJOBS[$count]['PHASES'][$Phases]['COLOR'] = "#ff4040";
+				$arJOBS[$count]['STATUS'] = "Y";
+			} elseif ($qd2['PH_STATUS'] == "Started"){
+				$arJOBS[$count]['PHASES'][$Phases]['COLOR'] = "yellow"; // inprogress
+				$arJOBS[$count]['PHASES'][$Phases]['DESC'] .= $NEXT_PH_ACTION . " ";
+				$arJOBS[$count]['PHASES'][$Phases]['SORTDATE'] = $PH_SORTDATE;
+			} if($qd2['PH_STATUS'] == "Not Started"){
+				$arJOBS[$count]['PHASES'][$Phases]['COLOR'] = "#99FF66";
+				$arJOBS[$count]['PHASES'][$Phases]['DESC'] = $qd2['PH_START_DATE'];
+				$arJOBS[$count]['PHASES'][$Phases]['SORTDATE'] = $qd2['PH_START_DATE_SORT'];
+			}
+			
+			$Phases++;	
+		}
+		
+		if ($arCtl['STATUS'] != "ALL"){
+			// status field set so unset job record
+			if ($arJOBS[$count]['STATUS'] == $arCtl['STATUS']){
+				$count++;// ok keep record
+			} else{
+				unset($arJOBS[$count]); //unset record and dont increment count
+			}
+		} else {
+			$count++;
+		}
+		
+	}
+
+
+	// no need to sort by particular phase fields
+	
+	foreach($arJOBS as $key => $arJobDetails){
+		foreach ($arJobDetails['PHASES'] as $PhaseNo => $arPhaseDetails){
+			$sortedkey = "SORTED_PHASE_$PhaseNo";
+			if ($arPhaseDetails['SORTDATE'] == ""){
+				$arJOBS[$key][$sortedkey] = "20130101";
+			} else {
+				$arJOBS[$key][$sortedkey] = str_replace("-","",$arPhaseDetails['SORTDATE']);
+			}
+		}
+	}
+	
+	
+	// check for sorted key and direction
+	if ($arCtl['SORTPHASE'] != ""){
+		//set order and values to use
+		global $sortvals;
+		$sortvals["KEY"] = "SORTED_PHASE_" . $arCtl['SORTPHASE'];
+		$sortvals["ORDER"] = $arCtl['SORTORDER'];
+		usort($arJOBS, "custom_sort");
+	}
+	// make sure a default sort order is set 
+	if ($arCtl['SORTORDER'] == "D"){
+		$arCtl['SORTORDER'] = "A";
+	} else {
+		$arCtl['SORTORDER'] = "D";
+	}
+	
+	
+	// get job type dd
+	
+	//job types
+	$sql = "select * from JOB_TYPE";
+	$result = mysqli_query($db,$sql);
+	if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+	while($qd = mysqli_fetch_assoc($result)){
+		$arJobTypes[$qd['JT_KEY']] = $qd['JT_NAME'];
+	}
+	
+	//status
+	$arStatus['ALL'] = "..";
+	$arStatus['N'] = "N";
+	$arStatus['Y'] = "Y";
+	
+	//status
+	$arCompatible[''] = "..";
+	$arCompatible['N'] = "NC";
+	$arCompatible['Y'] = "C";	
+	$arCompatible['No Id'] = "No Id";		
+
+	
+	for($day=0;$day<14;$day++){
+		$date = date('Y-m-d',date('U') + ($day * 24 * 60 * 60));
+		$fdate = date('D d/m/Y',date('U') + ($day * 24 * 60 * 60));
+		$arDateList[$date] = $fdate;
+	}
+	
+	/************************************************************************************************
+	 Assign Template Variables
+	***********************************************************************************************/
+	$smarty = getSmarty();
+
+	// results info
+	$smarty->assign('arJOBS',  $arJOBS);
+	$smarty->assign('arPhaseTitles',$arPhaseTitles);
+	$smarty->assign('arDateList',  $arDateList);
+	$smarty->assign('arJobTypeList',  $arJobTypes);
+	$smarty->assign('arStatusList',  $arStatus);
+	$smarty->assign('arCompatibleList',  $arCompatible);	
+	$smarty->assign('arCtl',    $arCtl);
+	$smarty->assign('SESSION',   $_SESSION);
+
+	$smarty->display('ListJobsProgress.tpl');
+
+}
+
+function custom_sort($a,$b) {
+	
+	global $sortvals;
+
+	if ($sortvals['ORDER'] == "A"){
+		return $a[$sortvals['KEY']] > $b[$sortvals['KEY']];
+	} else {
+		return $a[$sortvals['KEY']] < $b[$sortvals['KEY']];
+	}
+	
+}
+
+function ListJobs($arCtl,$JOBS){
+
+	/************************************************************************************************
+	 Get Data
+	***********************************************************************************************/
+	// DB Connection
+	$db = db_connect();
+	
+	$sql  = "SELECT  ST_KEY, ST_NAME, ST_UNITS, ST_BAKERY_CABINETS, ST_CAFE_CABINETS, ST_COUNTER_CABINETS, JO_KEY, JO_STKEY, JO_JOB_TYPE, 
+					date_format(JO_START_DATE,'%d/%m/%y') JO_START_DATE, date_format(JO_END_DATE,'%d/%m/%y') JO_END_DATE, JO_STATUS  
+				FROM JOB_TYPE, JOBS 
+				LEFT OUTER JOIN STORES ON JO_STKEY = ST_KEY
+				LEFT OUTER JOIN ASSETS ON ST_KEY = AS_STKEY 
+				where JO_JOB_TYPE = JT_KEY";
+
+	if ($arCtl['ST_NAME'] != ""){
+		$where .= " AND ST_NAME like '%" . $arCtl['ST_NAME'] . "%'";
+	}
+	
+	
+	$sql  = $sql . $where . " GROUP BY ST_KEY, ST_NAME, ST_UNITS, ST_BAKERY_CABINETS, ST_CAFE_CABINETS, ST_COUNTER_CABINETS, JO_KEY, JO_STKEY, JO_JOB_TYPE, JO_START_DATE, JO_START_DATE, JO_STATUS ORDER BY JO_START_DATE ASC";
+	
+	
+	
+	//echo $sql;
+	$result = mysqli_query($db,$sql);
+	if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+	
+	$count=0;
+	while($qd = mysqli_fetch_assoc($result)){
+		$arJOBS[$count] = $qd;
+		
+		// get latest phase
+		$sql = "select PH_KEY, PH_NAME, date_format(PH_START_DATE,'%d/%m/%y') PHASESTART from PHASES where PH_STATUS = 'Started' and PH_JOKEY = '" . $qd['JO_KEY'] . "' order by PH_SEQUENCE DESC LIMIT 1"; 
+	//echo $sql;
+		$result2 = mysqli_query($db,$sql);
+		if (!$result2) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+		$qd2 = mysqli_fetch_assoc($result2);
+		if ($qd2['PH_KEY'] == ""){
+			$arJOBS[$count]['PHASE'] = $qd['JO_STATUS'];
+		} else {
+			$arJOBS[$count]['PHASE'] = $qd2['PH_NAME'];
+			$arJOBS[$count]['PHASESTART'] = $qd2['PHASESTART'];
+		}
+		
+		$sql  = "SELECT AS_AREA, COUNT(*) TOT FROM ASSETS where AS_STKEY = '" . $qd['ST_KEY'] . "' group by AS_AREA";
+		$result3 = mysqli_query($db,$sql);
+		if (!$result3) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+		
+		while($qd3 = mysqli_fetch_assoc($result3)){
+			$arJOBS[$count][ASSETS][$qd3['AS_AREA']] = $qd3['TOT'];
+		}
+		
+		$sql  = "SELECT AS_COMPATIBLE_CONTROLLER, COUNT(*) COMPATS FROM ASSETS where AS_STKEY = '" . $qd['ST_KEY'] . "' group by AS_COMPATIBLE_CONTROLLER";
+		$result4 = mysqli_query($db,$sql);
+		if (!$result4) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+		
+		while($qd4 = mysqli_fetch_assoc($result4)){
+			$arJOBS[$count][ASSETS][$qd4['AS_COMPATIBLE_CONTROLLER']] = $qd4['COMPATS'];
+		}
+
+		$count++;
+	}
+
+	
+	$sql = "select * from JOB_TYPE";
+	$result = mysqli_query($db,$sql);
+	if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+	while($qd = mysqli_fetch_assoc($result)){
+		$arJobTypes[$qd['JT_KEY']] = $qd['JT_NAME'];
+	}
+
+// 	print_r($arJobTypes);
+	
+	/************************************************************************************************
+	 Assign Template Variables
+	***********************************************************************************************/
+	$smarty = getSmarty();
+	
+	// results info
+	$smarty->assign('arJOBS',  $arJOBS);
+	$smarty->assign('arJobTypeList',  $arJobTypes);
+	$smarty->assign('arYesNoList',  $arYesNoList);
+	$smarty->assign('arJobStatusList',  $arJobStatus);
+	$smarty->assign('arCtl',    $arCtl);
+	$smarty->assign('SESSION',   $_SESSION);
+	
+	$smarty->display('ListJobs.tpl');
+
+}
+
+function ShowJobs($arCtl,$JOBS){
+
+	/************************************************************************************************
+	 Get Data
+	***********************************************************************************************/
+	// DB Connection
+	$db = db_connect();
+	
+	if ($JOBS['JO_KEY'] != ""){
+		$sql  = "SELECT JO_KEY, JO_STKEY, JO_JOB_TYPE, date_format(JO_START_DATE,'%d/%m/%y') JO_START_DATE, date_format(JO_END_DATE,'%d/%m/%y') JO_END_DATE
+				FROM JOBS  where JO_KEY = '" . $JOBS['JO_KEY'] . "'";
+		
+		$result = mysqli_query($db,$sql);
+		if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+		
+		$JOBS = mysqli_fetch_assoc($result);
+		
+	} 
+
+	// do drop downs here
+	
+	//job types
+	$sql = "select * from JOB_TYPE";
+	$result = mysqli_query($db,$sql);
+	if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+	while($qd = mysqli_fetch_assoc($result)){
+		$arJobTypes[$qd['JT_KEY']] = $qd['JT_NAME'];
+	}
+	
+	// create dropdown for Course Groups
+	// do drop downs here
+	$sql = "select * from CUSTOMERS";
+	$result = mysqli_query($db,$sql);
+	if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+	while($qd = mysqli_fetch_assoc($result)){
+		$arCustomerList[$qd['CU_KEY']] = $qd['CU_NAME'];
+	}
+	
+	$sql = "select * from STORES";
+	$result = mysqli_query($db,$sql);
+	$arStoreList[''] = "Select Store";
+	if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+	while($qd = mysqli_fetch_assoc($result)){
+		$arStoreList[$qd['ST_KEY']] = $qd['ST_NUMBER'] . " " . $qd['ST_NAME'];
+	}
+	
+	
+	if ($JOBS['JO_KEY'] != ""){
+		$sql = "select PH_JTPKEY, JTP_DURATION, JTP_FUNCTION, PH_SEQUENCE, PH_STATUS, PH_KEY, PH_NAME, 
+				date_format(PH_START_DATE,'%d/%m/%y') PH_START_DATE, date_format(PH_END_DATE,'%d/%m/%y') PH_END_DATE,
+				date_format(if(PH_STATUS = 'Started',date_add(PH_ACTUAL_START_DATE, INTERVAL JTP_DURATION DAY),date_add(curdate(), INTERVAL JTP_DURATION DAY)),'%d/%m/%y') CALC_END_DATE
+				from PHASES,JOB_TYPE_PHASES 
+				where PH_JOKEY = '" . $JOBS['JO_KEY'] . "' 
+				and JTP_KEY = PH_JTPKEY
+				order by PH_SEQUENCE ASC"; 
+		//	echo $sql;
+		$result2 = mysqli_query($db,$sql);
+		if (!$result2) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+		while($qd = mysqli_fetch_assoc($result2)){
+			$arPHASES[$qd['PH_JTPKEY']] = $qd;
+			// get any prerequistes
+			$sql = "select * from PHASE_PREREQ where PP_JTPKEY = '"  . $qd['PH_JTPKEY'] . "'";
+			//echo $sql;
+			$result3 = mysqli_query($db,$sql);
+			if (!$result3) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+			while($qd2 = mysqli_fetch_assoc($result3)){
+				$arPHASES[$qd['PH_JTPKEY']]['PHASE_PREREQ'][] = $qd2;
+			}		
+		}
+		
+		
+		// now loop round and sort out
+		// set start date in epoch so can add up if no start date then use today
+		if ($JOBS['JO_START_DATE'] != ""){
+			$arStart = explode('/',$JOBS['JO_START_DATE']);
+			$CurrentDate = mktime(0,0,0,$arStart['1'],$arStart['0'],$arStart['2']);
+		} else {
+			$CurrentDate = date('U');
+		}
+		
+		$count=0;
+		foreach ($arPHASES as $JTP_KEY => $PHASE){
+
+			if ($PHASE['PH_STATUS'] == "Complete"){
+				// complete so dont need to calculate expected dates	
+				$arPHASES[$JTP_KEY]['CanPhaseStart'] = "N";
+				
+			} else {
+				// not complete so calculate expected end dates
+				// so check if a start date is populated
+				if($PHASE['PH_START_DATE'] != ""){
+					$arStart = explode('/',$PHASE['PH_START_DATE']);
+					$StartDate = mktime(0,0,0,$arStart['1'],$arStart['0'],$arStart['2']);
+					$EndDate = $StartDate + ($PHASE['JTP_DURATION'] * 60*60*24);
+				} else {
+					//otherwise use the current date
+					$StartDate = $CurrentDate;
+					$EndDate = $StartDate + ($PHASE['JTP_DURATION'] * 60*60*24);
+				}
+
+				// now check for any prerequistes ()that migt change start date)
+				$arPHASES[$JTP_KEY]['CanPhaseStart'] = "Y";
+				
+				foreach($PHASE['PHASE_PREREQ'] as $key2 => $arPHASE_PREREQ){
+					// need to get status 
+					$arPHASES['PREREQ'][$key2]['NAME'] = $arPHASES[$arPHASE_PREREQ['PP_PRE_JTPKEY']]['PH_NAME'];
+					$arPHASES['PREREQ'][$key2]['STATUS'] = $arPHASES[$arPHASE_PREREQ['PP_PRE_JTPKEY']]['PH_STATUS'];
+					// if spome pre reqs not finished get their end date
+					// the end date will be created by this script
+					if ($arPHASES[$arPHASE_PREREQ['PP_PRE_JTPKEY']]['PH_STATUS'] != "Complete"){
+						// if a pre req phase is not complete calc how long it will be completed so add duration to current
+						
+						$AdjStartDate = $StartDate;
+						
+						if ($arPHASES[$arPHASE_PREREQ['PP_PRE_JTPKEY']]['END_DATE']  > $AdjStartDate){
+							$AdjStartDate = $arPHASES[$arPHASE_PREREQ['PP_PRE_JTPKEY']]['END_DATE'] ;
+						}
+
+						// as pre req is still to be completed						
+						$arPHASES[$JTP_KEY]['CanPhaseStart'] = "N"; // used to show if job can be started
+					} else {
+						// if no prerequsites then calc end date
+					}
+					$arPHASES[$JTP_KEY]['PREREQDESC'] = $arPHASES[$JTP_KEY]['PREREQDESC'] . $arPHASES[$arPHASE_PREREQ['PP_PRE_JTPKEY']]['PH_NAME'] . " ";
+				}
+				
+				// check if start date less than adjust start date use latest
+				if($AdjStartDate > $StartDate){
+					$arPHASES[$JTP_KEY]['CALC_END_DATE'] = date('d/m/Y',$AdjStartDate + ($PHASE['JTP_DURATION'] * 60*60*24));
+				} else {
+					//otherwise use the current date
+					$arPHASES[$JTP_KEY]['CALC_END_DATE'] = date('d/m/Y',$StartDate + ($PHASE['JTP_DURATION'] * 60*60*24));
+				}
+				
+			}			
+
+			$arPHASES_ORDERED[$count] = $arPHASES[$JTP_KEY];
+			$count++;
+		}
+		
+	}
+	
+	$CAssetCount=0;
+	$NCAssetCount=0;
+	
+	if ($JOBS['JO_KEY'] != ""){
+
+
+		// see if any asset set up already to decide who the survey starts
+		$sql = "select * from ASSETS where AS_STKEY = '" . $JOBS['JO_STKEY'] . "' and AS_COMPATIBLE_CONTROLLER != 'Y'";
+		//echo $sql;
+		$result = mysqli_query($db,$sql);
+		if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+		while($qd = mysqli_fetch_assoc($result)){
+			$arNCASSETS[] = $qd;
+			$NCAssetCount++;
+		}
+
+			// see if any asset set up already to decide who the survey starts
+		$sql = "select * from ASSETS where AS_STKEY = '" . $JOBS['JO_STKEY'] . "' and AS_COMPATIBLE_CONTROLLER = 'Y'";
+		//echo $sql;
+		$result = mysqli_query($db,$sql);
+		if (!$result) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+		while($qd2 = mysqli_fetch_assoc($result)){
+			$arCASSETS[] = $qd2;
+			$CAssetCount++;
+		}
+	
+	}
+
+	$arCtl['NCAssetCount'] = $NCAssetCount;
+	$arCtl['CAssetCount'] = $CAssetCount;		
+	
+	/************************************************************************************************
+	 Assign Template Variables
+	***********************************************************************************************/
+	$smarty = getSmarty();
+	
+	// results info
+	$smarty->assign('JOBS',  $JOBS);
+	$smarty->assign('arPHASES',  $arPHASES_ORDERED);
+	$smarty->assign('arCtl',    $arCtl);
+	$smarty->assign('arCASSETS',  $arCASSETS);
+	$smarty->assign('arNCASSETS',  $arNCASSETS);
+	$smarty->assign('JobTypeList',    $arJobTypes);
+	$smarty->assign('StoreList',    $arStoreList);
+	$smarty->assign('CustomerList',    $arCustomerList);
+	$smarty->assign('SESSION',   $_SESSION);
+	
+	$smarty->display('ShowJobs.tpl');
+
+}
+
+
+function UpdJobs($arCtl,$JOBS){
+
+	// convert dates
+	
+	$JOBS['JO_START_DATE'] = convertdate($JOBS['JO_START_DATE']);
+	$JOBS['JO_END_DATE'] = convertdate($JOBS['JO_END_DATE']);
+
+	$mysqli = db_connect();
+	
+	// phases for job type - will be in table
+	$sql = "select * from JOB_TYPE_PHASES where JTP_JTKEY = " . $JOBS['JO_JOB_TYPE'] . " order by JTP_SEQUENCE";
+	$result2 = mysqli_query($mysqli,$sql);
+	if (!$result2) errormessage(sql_error, $sql, NULL, __LINE__, __FILE__);
+	while($qd = mysqli_fetch_assoc($result2)){
+		$arPHASES[] = $qd;
+	}	
+
+// 	$arPhases['X'][0] = "Survey";
+// 	$arPhases['X'][1] = "Provisioning";
+// 	$arPhases['X'][2] = "Install";
+// 	$arPhases['X'][3] = "Commissioning";
+// 	$arPhases['X'][4] = "Completion";
+// 	$arPhases['X'][5] = "Admin";
+	
+	
+	
+	if ($JOBS['JO_KEY']!= "") {
+	
+		$query = "UPDATE JOBS SET
+					JO_START_DATE = '" . $JOBS['JO_START_DATE'] . "',
+					JO_END_DATE = '" . $JOBS['JO_END_DATE'] . "'
+					WHERE JO_KEY = '" . $JOBS['JO_KEY'] . "'";
+		//echo $query;
+		
+		$result = mysqli_query($mysqli,$query);
+		if (!$result) errormessage(sql_error, $query, NULL, __LINE__, __FILE__);
+		
+		ShowJobs($arCtl,$JOBS);
+		exit();
+		
+	} else {
+
+		// find duplicate job i.e. same type and store and open
+		$sql = "select * from JOBS where JO_STKEY = '" . $JOBS['JO_STKEY']  . "' and JO_JOB_TYPE = '" . $JOBS['JO_JOB_TYPE'] . "' and JO_STATUS != 'COMPLETE' order by JO_KEY DESC LIMIT 1";
+		$result = mysqli_query($mysqli,$sql);
+		if (!$result) errormessage(sql_error, $query, NULL, __LINE__, __FILE__);
+		$JOBS_DUP = mysqli_fetch_assoc($result);
+
+		
+		
+		if ($JOBS_DUP['JO_KEY'] != ""){
+			// duplicate does exist so sent use to Show Jobs and set message
+			$arCtl['Message'] = " *** Job already exists redirected ***";			
+			ShowJobs($arCtl,$JOBS_DUP);
+			exit();
+		}
+		
+		
+		$query = "INSERT INTO JOBS (
+					JO_JOB_TYPE,
+					JO_STKEY,
+					JO_USKEY,
+					JO_START_DATE,
+					JO_END_DATE,
+					JO_STATUS,
+					JO_CREATEDATE)
+					VALUES (
+					'" . $JOBS['JO_JOB_TYPE'] . "',
+					'" . $JOBS['JO_STKEY'] . "',
+					'" . $_SESSION['US_KEY'] . "',
+					'" . $JOBS['JO_START_DATE'] . "',
+					'" . $JOBS['JO_END_DATE'] . "',
+					'NEW', now())";
+
+ 		
+		$result = mysqli_query($mysqli,$query);
+		if (!$result) errormessage(sql_error, $query, NULL, __LINE__, __FILE__);
+		$JOBS['JO_KEY'] = mysqli_insert_id($mysqli);
+	
+		// if creating then create phases based on job type
+		
+		foreach ($arPHASES as $key => $PHASES){
+			$sql = "insert into PHASES (
+							PH_SEQUENCE,
+							PH_JOKEY,
+							PH_NAME,
+							PH_JTPKEY,
+							PH_STATUS
+					) values ('" . 
+							$PHASES['JTP_SEQUENCE']. "','" . 
+							$JOBS['JO_KEY'] . "','" . 
+							$PHASES['JTP_NAME'] . "','" .
+							$PHASES['JTP_KEY'] . "',
+							'Not Started'
+					)";
+  			//echo $sql;
+			$result = mysqli_query($mysqli,$sql);
+			if (!$result) errormessage(sql_error, $query, NULL, __LINE__, __FILE__);
+				
+		}
+		
+	
+	}
+
+	ShowJobs($arCtl,$JOBS);
+	exit();
+}
+
+
+
+function DelJobs($arCtl,$JOBS){
+	// DB Connection
+	$mysqli = db_connect();
+
+	$arCustomerKeys = getCustomerKeys($arCtl,$JOBS['CU_KEY'],$arCustomerKeys);
+	
+	foreach($arCustomerKeys as $CU_KEY){
+		$query = "DELETE FROM CUSTOMERS WHERE CU_KEY = '" . $CU_KEY . "'";
+		//echo $query . "<BR>";
+		
+		$result = mysqli_query($mysqli,$query);
+		if (!$result) error_message(sql_error, $query, NULL, __LINE__, __FILE__); 
+	}		
+	ListJobs($arCtl,$JOBS);
+} 
+
+
+
+
+?>
